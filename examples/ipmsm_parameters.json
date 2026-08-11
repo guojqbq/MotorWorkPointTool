@@ -1,0 +1,32 @@
+{
+  "format": "PMSMPerformanceToolParameters",
+  "version": "1.0",
+  "units": {
+    "Rs": "ohm (stator phase resistance)",
+    "Ld_mH": "mH",
+    "Lq_mH": "mH",
+    "flux_pm": "Wb",
+    "Udc": "V",
+    "Imax": "A (definition given by current_definition)",
+    "max_speed_rpm": "rpm",
+    "Id_min": "A (definition given by current_definition)",
+    "Pmax_kW": "kW",
+    "voltage_utilization": "dimensionless"
+  },
+  "parameters": {
+    "pole_pairs": 4,
+    "Rs": 0.03,
+    "Ld_mH": 0.6,
+    "Lq_mH": 1.0,
+    "flux_pm": 0.06,
+    "Udc": 320.0,
+    "Imax": 180.0,
+    "max_speed_rpm": 16000.0,
+    "speed_points": 161,
+    "Id_min": null,
+    "Pmax_kW": null,
+    "voltage_utilization": 0.95,
+    "modulation": "SVPWM",
+    "current_definition": "peak"
+  }
+}

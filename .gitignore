@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
+release/
+cases/
+.release-*/
+*.spec.bak
+*.csv
+*.png
+!docs/*.png
