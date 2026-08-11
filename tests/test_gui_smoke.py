@@ -32,7 +32,7 @@ from ui.plot_theme import (
 def test_main_window_can_be_created_without_display():
     app = QApplication.instance() or QApplication([])
     window = MainWindow(auto_calculate=False)
-    assert window.windowTitle() == "PMSM 性能分析工具 v0.4.1"
+    assert window.windowTitle() == "PMSM 性能分析工具 v0.4.2"
     assert window.parameter_panel.parameters().motor_type == "IPMSM"
     assert not window.parameter_panel.export_csv_button.isEnabled()
     assert isinstance(window.dq_curve_controls, QToolButton)
@@ -365,12 +365,74 @@ def test_inductance_and_winding_controls_are_compact_and_default_safe():
     assert not hasattr(panel, "inductance_section")
     assert panel.motor_section.is_expanded()
     assert not panel.saturation_map_controls.isVisible()
+    assert not panel.ld_mh.isHidden()
+    assert not panel.lq_mh.isHidden()
     assert not panel.winding_section.is_expanded()
     assert not panel.case_section.is_expanded()
     panel.winding_connection.setCurrentIndex(
         panel.winding_connection.findData("OPEN_WINDING")
     )
     assert panel.open_winding_topology.isEnabled()
+
+
+def test_saturation_mode_hides_fixed_inductance_and_shows_format_help():
+    from ui.parameter_panel import ParameterPanel
+
+    app = QApplication.instance() or QApplication([])
+    panel = ParameterPanel()
+    panel.inductance_model.setCurrentIndex(
+        panel.inductance_model.findData("SATURATION_MAP")
+    )
+    assert panel.ld_mh.isHidden()
+    assert panel.lq_mh.isHidden()
+    assert not panel.saturation_map_controls.isHidden()
+    assert "第一行 = Iq(A)" in panel.saturation_format_hint.text()
+    assert panel.saturation_format_button.text() == "查看格式示例"
+    assert panel.saturation_template_button.text() == "导出 Excel 模板"
+    panel.inductance_model.setCurrentIndex(
+        panel.inductance_model.findData("CONSTANT")
+    )
+    assert not panel.ld_mh.isHidden()
+    assert not panel.lq_mh.isHidden()
+
+
+def test_saturation_format_dialog_and_prominent_progress_card():
+    from ui.parameter_panel import ParameterPanel
+    from ui.saturation_map_dialog import SaturationMapFormatDialog
+
+    app = QApplication.instance() or QApplication([])
+    dialog = SaturationMapFormatDialog("μH")
+    assert dialog.windowTitle() == "Ld/Lq Excel 格式示例"
+    assert "Id/Iq" in dialog.example_label.text()
+    panel = ParameterPanel()
+    panel.set_calculating(True)
+    panel.start_progress()
+    panel.update_progress_stage("内部 Map", 6665, 9801)
+    panel.update_progress(68)
+    panel.update_progress_elapsed(32.5)
+    assert not panel.calculation_progress_card.isHidden()
+    assert panel.calculation_progress_bar.minimumHeight() >= 22
+    assert panel.calculation_progress_bar.value() == 68
+    assert "内部工作点" in panel.calculation_stage_label.text()
+    assert "6,665 / 9,801" in panel.calculation_point_label.text()
+    assert "32.5 s" in panel.calculation_elapsed_label.text()
+    panel.set_calculating(False)
+    panel.finish_progress("completed", 40.0)
+    assert panel.calculation_progress_bar.value() == 100
+    assert panel.calculation_progress_card.property("state") == "completed"
+    panel.finish_progress("failed", 41.0)
+    assert panel.calculation_progress_card.property("state") == "failed"
+    assert panel.calculation_stage_label.text() == "计算失败"
+
+
+def test_modern_stylesheet_keeps_engineering_layout_contract():
+    from ui.styles import APP_STYLESHEET
+
+    assert "#F4F6F8" in APP_STYLESHEET
+    assert "#2563EB" in APP_STYLESHEET
+    assert 'QFrame[role="progressCard"]' in APP_STYLESHEET
+    assert "min-height: 32px" in APP_STYLESHEET
+    assert "border-radius: 7px" in APP_STYLESHEET
 
 
 def test_saturation_preview_dialog_can_render_maps_offscreen():

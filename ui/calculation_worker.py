@@ -150,14 +150,20 @@ class CalculationWorker(QObject):
             external = EnvelopeSolver(
                 effective_parameters, envelope_settings, limits
             ).solve(
-                progress_callback=lambda done, total: self._report_phase(
-                    10, 38, done, total
+                progress_callback=lambda done, total: self._report_named_phase(
+                    "外特性", 10, 37, done, total
                 ),
                 cancel_check=cancel_check,
                 diagnostic_callback=self._log_solver_event,
             )
             external_elapsed = perf_counter() - external_started
             LOGGER.info("外特性耗时 %.3f s", external_elapsed)
+
+            self._emit_stage("MTPA/MTPV", 0, 1, 38)
+            mtpv_envelope = build_mtpv_envelope_from_external(
+                effective_parameters, external
+            )
+            self._emit_stage("MTPA/MTPV", 1, 1, 39)
 
             map_shape = map_settings.grid_shape(self.profile)
             self._emit_stage(
@@ -171,8 +177,8 @@ class CalculationWorker(QObject):
                 limits,
             ).solve(
                 self.profile,
-                progress_callback=lambda done, total: self._report_phase(
-                    40, 92, done, total
+                progress_callback=lambda done, total: self._report_named_phase(
+                    "内部 Map", 40, 92, done, total
                 ),
                 cancel_check=cancel_check,
                 diagnostic_callback=self._log_solver_event,
@@ -180,13 +186,11 @@ class CalculationWorker(QObject):
             )
             map_elapsed = perf_counter() - map_started
             LOGGER.info("内部 Map 耗时 %.3f s", map_elapsed)
-            self._emit_stage("损耗效率", 1, 1, 96)
+            self._emit_stage("损耗效率", 0, 1, 94)
             mtpa_trajectory = build_mtpa_trajectory_from_map(
                 effective_parameters, operating_map
             )
-            mtpv_envelope = build_mtpv_envelope_from_external(
-                effective_parameters, external
-            )
+            self._emit_stage("损耗效率", 1, 1, 96)
             if cancel_check():
                 raise InterruptedError("计算已取消。")
         except InterruptedError as exc:
@@ -239,6 +243,19 @@ class CalculationWorker(QObject):
         fraction = completed / max(total, 1)
         self.progress.emit(
             self.version, round(start + (end - start) * fraction)
+        )
+
+    def _report_named_phase(
+        self,
+        name: str,
+        start: int,
+        end: int,
+        completed: int,
+        total: int,
+    ) -> None:
+        self._report_phase(start, end, completed, total)
+        self.stage.emit(
+            self.version, name, int(completed), int(total)
         )
 
     def _emit_stage(

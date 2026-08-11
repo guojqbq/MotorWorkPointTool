@@ -4,10 +4,53 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QDialog, QLabel, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QLabel,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from models.saturation_map import InductanceSaturationMap
 from ui.plot_theme import performance_colormap
+
+
+class SaturationMapFormatDialog(QDialog):
+    """Small, copy-friendly workbook format reference."""
+
+    def __init__(self, unit: str = "μH", parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Ld/Lq Excel 格式示例")
+        self.setMinimumWidth(560)
+        layout = QVBoxLayout(self)
+        description = QLabel(
+            "<b>Sheet名必须为 Ld、Lq</b><br>"
+            "第一行是 Iq(A)，第一列是 Id(A)，其余单元格为电感矩阵。<br>"
+            f"电感单位由界面的“导入单位”决定；当前为 <b>{unit}</b>。"
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+        self.example_label = QLabel(
+            "<pre>Sheet: Ld / Lq\n\n"
+            "             Iq →\n"
+            "Id/Iq       0      55.1     110.2   ...\n"
+            "0           ...    ...      ...\n"
+            "-55.1       ...    ...      ...\n"
+            "-110.2      ...    ...      ...</pre>"
+        )
+        self.example_label.setProperty("role", "formatExample")
+        layout.addWidget(self.example_label)
+        note = QLabel(
+            "Ld与Lq必须使用完全相同的Id/Iq轴；不要保留空白矩阵单元格。"
+        )
+        note.setWordWrap(True)
+        note.setProperty("role", "muted")
+        layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
 
 class SaturationMapPreviewDialog(QDialog):

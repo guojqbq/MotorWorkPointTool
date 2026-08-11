@@ -76,6 +76,7 @@ def test_diagnostic_mode_runs_11_by_11_with_stage_and_point_progress(caplog):
     assert result.operating_map.shape == (11, 11)
     assert any(name == "参数校验" for _, name, _, _ in stages)
     assert any(name == "外特性" and done == 11 for _, name, done, _ in stages)
+    assert any(name == "MTPA/MTPV" for _, name, _, _ in stages)
     assert any(
         name == "内部 Map" and done == 121 and total == 121
         for _, name, done, total in stages

@@ -6,7 +6,7 @@ PySide6 桌面 PMSM 性能分析工具：外特性、内部工况 Map、dq 工�
 
 ## 当前版本号
 
-`0.4.1`（2026-08-11）。
+`0.4.2`（2026-08-11）。
 
 ## 技术栈
 
@@ -54,11 +54,11 @@ dq 距离按 Is_max 归一化；默认 MTPA 阈值 0.015、MTPV 0.020、电压�
 
 ## 当前已完成功能
 
-CONSTANT/SATURATION_MAP、Ld/Lq Excel 导入/高对比预览/双线性插值、STAR/DELTA/OPEN_WINDING、两种 Udc 输入、外特性、内部独立定转矩 Map、MTPA/MTPV、三色区域、效率/损耗、点击联动、真实后台进度/取消/超时/完整异常日志、结果过期、案例保存/加载/删除/多选对比、外特性/dq 叠加、Efficiency/ΔEfficiency/ΔTorque、JSON/CSV/NPZ/Excel/PNG。
+CONSTANT/SATURATION_MAP、Ld/Lq Excel导入/模板/格式示例/高对比预览/双线性插值、STAR/DELTA/OPEN_WINDING、两种Udc输入、外特性、内部独立定转矩Map、MTPA/MTPV、三色区域、效率/损耗、点击联动、独立真实进度卡片/取消/超时/完整异常日志、结果过期、案例保存/加载/删除/多选对比、外特性/dq叠加、Efficiency/ΔEfficiency/ΔTorque、JSON/CSV/NPZ/Excel/PNG。
 
 ## 本次修改内容
 
-电感模型并入电机参数；Map 预览独立色阶和悬停值；进度显示阶段、点数、百分比和总耗时；结构化后台异常；有限迭代/超时/慢点日志；11×11 诊断；复用一致网格外特性和已求 MTPA/MTPV，消除 GUI 主线程完整轨迹重算。算法版本 `operating-map-3.1`。
+现代统一StyleSheet；进度卡片固定在开始计算按钮下方，显示真实六阶段、点数、百分比、用时和取消；饱和模式隐藏固定Ld/Lq；增加格式提示、示例弹窗、Excel模板及精确导入错误。修复取消回调被版本过滤和失败结果覆盖旧结果。电机算法未改，算法版本仍为`operating-map-3.1`。
 
 ## 未完成
 
@@ -80,7 +80,7 @@ CONSTANT/SATURATION_MAP、Ld/Lq Excel 导入/高对比预览/双线性插值、S
 
 ## 最近一次测试结果
 
-2026-08-11：发布脚本独立全测 `139 passed in 17.39s`；打包 EXE 的计算、图像/数据导出和案例保存/加载冒烟通过。
+2026-08-11：开发环境全测`144 passed in 20.03s`；独立发布环境`144 passed in 19.08s`；打包EXE计算、图像/数据导出和案例保存/加载冒烟通过；100%/125%缩放截图无重叠。
 
 ## 最近性能数据
 
@@ -88,4 +88,4 @@ CONSTANT/SATURATION_MAP、Ld/Lq Excel 导入/高对比预览/双线性插值、S
 
 ## 最近一次发布包位置和大小
 
-`release/PMSM_Performance_Tool_v0.4.1/`：144,059,444 bytes（137.39 MiB）；ZIP：56,516,900 bytes（53.90 MiB）。最大文件为 NumPy OpenBLAS DLL：20,495,360 bytes（19.55 MiB）。
+`release/PMSM_Performance_Tool_v0.4.2/`：144,066,838 bytes（137.39 MiB）；ZIP：56,525,342 bytes（53.91 MiB）。最大文件为NumPy OpenBLAS DLL：20,495,360 bytes（19.55 MiB）。

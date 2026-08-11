@@ -43,7 +43,7 @@ from services.export_service import (
     export_operating_points_csv,
 )
 from services.project_io import load_project_with_characteristic, save_project
-from services.saturation_map_io import load_ld_lq_workbook
+from services.saturation_map_io import load_ld_lq_workbook, write_ld_lq_template
 from services.case_repository import (
     CaseRepository,
     SavedCase,
@@ -59,7 +59,10 @@ from ui.operating_map_plot import OperatingMapPlot
 from ui.operating_map_table import OperatingMapTable
 from ui.operating_point_table import OperatingPointTable
 from ui.parameter_panel import ParameterPanel
-from ui.saturation_map_dialog import SaturationMapPreviewDialog
+from ui.saturation_map_dialog import (
+    SaturationMapFormatDialog,
+    SaturationMapPreviewDialog,
+)
 from ui.case_comparison_widget import CaseComparisonWidget
 from ui.case_selection_dialog import CaseSelectionDialog
 from ui.styles import APP_STYLESHEET
@@ -237,6 +240,12 @@ class MainWindow(QMainWindow):
         panel.exportImagesRequested.connect(self.export_images)
         panel.importSaturationRequested.connect(self.import_saturation_maps)
         panel.previewSaturationRequested.connect(self.preview_saturation_maps)
+        panel.showSaturationFormatRequested.connect(
+            self.show_saturation_map_format
+        )
+        panel.exportSaturationTemplateRequested.connect(
+            self.export_saturation_template
+        )
         panel.saveCaseRequested.connect(self.save_current_case)
         panel.loadCaseRequested.connect(self.load_saved_case)
         panel.deleteCaseRequested.connect(self.delete_saved_case)
@@ -299,6 +308,32 @@ class MainWindow(QMainWindow):
             return
         dialog = SaturationMapPreviewDialog(ld_map, lq_map, self)
         dialog.exec()
+
+    def show_saturation_map_format(self) -> None:
+        dialog = SaturationMapFormatDialog(
+            self.parameter_panel.inductance_map_unit.currentText(), self
+        )
+        dialog.exec()
+
+    def export_saturation_template(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出 Ld/Lq Excel 模板",
+            "Ld_Lq饱和电感模板.xlsx",
+            "Excel 工作簿 (*.xlsx)",
+        )
+        if not path:
+            return
+        try:
+            target = write_ld_lq_template(path)
+        except Exception as exc:
+            self._show_error("模板导出失败", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "模板已生成",
+            f"已生成空白 Ld/Lq 模板：\n{target}",
+        )
 
     def save_current_case(self) -> None:
         if (
@@ -497,6 +532,7 @@ class MainWindow(QMainWindow):
         if request.version != self._request_version:
             return
         self.parameter_panel.set_calculating(True)
+        self.parameter_panel.start_progress()
         self.progress_bar.setValue(0)
         self.stage_label.setText("正在准备计算…")
         self.elapsed_label.setText("总耗时 00:00.0")
@@ -566,7 +602,6 @@ class MainWindow(QMainWindow):
 
     def cancel_calculation(self) -> None:
         if self._thread is not None and self._thread.isRunning():
-            self._request_version += 1
             self._thread.requestInterruption()
             self.statusBar().showMessage("正在取消当前计算…")
         else:
@@ -856,6 +891,7 @@ class MainWindow(QMainWindow):
     def _calculation_progress(self, version: int, progress: int) -> None:
         if version == self._request_version:
             self.progress_bar.setValue(progress)
+            self.parameter_panel.update_progress(progress)
 
     def _update_elapsed_display(self) -> None:
         if self._calculation_started_at is None:
@@ -866,12 +902,14 @@ class MainWindow(QMainWindow):
         self.elapsed_label.setText(
             f"总耗时 {minutes:02d}:{seconds:04.1f}"
         )
+        self.parameter_panel.update_progress_elapsed(elapsed)
 
     def _calculation_stage(
         self, version: int, stage: str, completed: int, total: int
     ) -> None:
         if version != self._request_version:
             return
+        self.parameter_panel.update_progress_stage(stage, completed, total)
         if total > 0:
             percent = min(100.0, max(0.0, 100.0 * completed / total))
             if stage == "内部 Map":
@@ -922,6 +960,8 @@ class MainWindow(QMainWindow):
         if version != self._request_version:
             return
         drawing_started = perf_counter()
+        self.parameter_panel.update_progress_stage("绘图刷新", 0, 1)
+        self.parameter_panel.update_progress(98)
         self.statusBar().showMessage("绘图刷新：0/1")
         request = self._active_request
         if request is None:
@@ -953,13 +993,6 @@ class MainWindow(QMainWindow):
         diagnostics = result.operating_map.diagnostics()
         self._last_map_diagnostics = diagnostics
 
-        # 1. Save the new result before refreshing any dependent view.
-        self._analysis_result = result
-        self._current_parameters = result.calculation_parameters
-        self._last_input_parameters = input_parameters
-        self._last_characteristic_input = characteristic_input
-        self._last_losses = losses
-        self._last_settings = settings
         if int(diagnostics["feasible_points"]) == 0:
             self.progress_bar.setValue(0)
             self._dirty = True
@@ -970,7 +1003,22 @@ class MainWindow(QMainWindow):
             )
             self._show_error("内部 Map 求解失败", message)
             self.statusBar().showMessage(message)
+            elapsed = (
+                perf_counter() - self._calculation_started_at
+                if self._calculation_started_at is not None
+                else 0.0
+            )
+            self.parameter_panel.finish_progress("failed", elapsed)
             return
+
+        # Save only a complete, feasible result.  Failed/cancelled work never
+        # replaces the last complete analysis visible in the GUI.
+        self._analysis_result = result
+        self._current_parameters = result.calculation_parameters
+        self._last_input_parameters = input_parameters
+        self._last_characteristic_input = characteristic_input
+        self._last_losses = losses
+        self._last_settings = settings
 
         # 2. Update the external envelope and its independent internal scatter.
         self._dataframe = result.external_characteristic.reset_index(drop=True)
@@ -1065,6 +1113,11 @@ class MainWindow(QMainWindow):
             total_elapsed,
         )
         self._update_elapsed_display()
+        self.parameter_panel.update_progress_stage("绘图刷新", 1, 1)
+        self.parameter_panel.finish_progress("completed", total_elapsed)
+        QTimer.singleShot(
+            5000, self.parameter_panel.hide_completed_progress
+        )
         self._elapsed_timer.stop()
         self._calculation_started_at = None
 
@@ -1124,7 +1177,12 @@ class MainWindow(QMainWindow):
             self.current_point_panel.clear_values()
 
     def _calculation_failed(self, version: int, error) -> None:
-        if version != self._request_version:
+        active_version = (
+            self._active_request.version
+            if self._active_request is not None
+            else None
+        )
+        if version != self._request_version and version != active_version:
             return
         self.progress_bar.setValue(0)
         self._elapsed_timer.stop()
@@ -1133,8 +1191,10 @@ class MainWindow(QMainWindow):
         self.parameter_panel.set_result_available(
             self._analysis_result is not None
         )
+        cancelled = False
         if isinstance(error, CalculationErrorDetails):
             message = error.message
+            cancelled = error.cancelled
             if not error.cancelled:
                 LOGGER.error(
                     "GUI 收到后台异常：%s:%d %s\n%s",
@@ -1151,9 +1211,18 @@ class MainWindow(QMainWindow):
                 self._show_error("计算失败", message)
         suffix = "；已保留旧结果" if self._analysis_result is not None else ""
         self.stage_label.setText(
-            "计算已取消"
-            if message == "计算已取消。"
-            else "计算失败"
+            "计算已取消" if cancelled or message == "计算已取消。" else "计算失败"
+        )
+        elapsed = (
+            perf_counter() - self._calculation_started_at
+            if self._calculation_started_at is not None
+            else 0.0
+        )
+        self.parameter_panel.finish_progress(
+            "cancelled"
+            if cancelled or message == "计算已取消。"
+            else "failed",
+            elapsed,
         )
         self.statusBar().showMessage(f"{message}{suffix}")
         self._calculation_started_at = None
@@ -1161,6 +1230,16 @@ class MainWindow(QMainWindow):
     def _thread_finished(self) -> None:
         self._update_elapsed_display()
         self._elapsed_timer.stop()
+        if (
+            self.parameter_panel.calculation_progress_card.property("state")
+            == "running"
+        ):
+            elapsed = (
+                perf_counter() - self._calculation_started_at
+                if self._calculation_started_at is not None
+                else 0.0
+            )
+            self.parameter_panel.finish_progress("cancelled", elapsed)
         self._thread = None
         self._worker = None
         self._active_request = None

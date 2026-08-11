@@ -19,7 +19,7 @@ from models.inductance_model import InductanceModel
 from models.motor_parameters import MotorParameters
 from models.saturation_map import InductanceSaturationMap
 from models.winding_connection import OpenWindingTopology, WindingConnection
-from services.saturation_map_io import load_ld_lq_workbook
+from services.saturation_map_io import load_ld_lq_workbook, write_ld_lq_template
 from services.project_io import load_project, save_project
 from models.loss_model_parameters import LossModelParameters
 from models.map_calculation_settings import MapCalculationSettings
@@ -71,6 +71,45 @@ def test_excel_ld_lq_workbook_import(tmp_path):
     ld_map, lq_map = load_ld_lq_workbook(path)
     assert float(ld_map.interpolate_h(-200.0, 0.0)) == pytest.approx(500e-6)
     assert float(lq_map.interpolate_h(0.0, 200.0)) == pytest.approx(1500e-6)
+
+
+def test_saturation_template_has_required_sheets_and_blank_matrix(tmp_path):
+    path = write_ld_lq_template(tmp_path / "Ld_Lq_template")
+    assert path.suffix == ".xlsx"
+    workbook = pd.ExcelFile(path)
+    assert workbook.sheet_names == ["Ld", "Lq"]
+    frame = pd.read_excel(path, sheet_name="Ld", header=None)
+    assert "Id/Iq" in str(frame.iloc[0, 0])
+    assert pd.isna(frame.iloc[1, 1])
+
+
+def test_saturation_import_errors_identify_sheet_grid_and_blank_cell(tmp_path):
+    missing = tmp_path / "missing_lq.xlsx"
+    with pd.ExcelWriter(missing, engine="openpyxl") as writer:
+        pd.DataFrame([["Id/Iq", 0, 1], [0, 1, 1], [-1, 1, 1]]).to_excel(
+            writer, sheet_name="Ld", header=False, index=False
+        )
+    with pytest.raises(ValueError, match="未找到Sheet: Lq"):
+        load_ld_lq_workbook(missing)
+
+    mismatch = tmp_path / "mismatch.xlsx"
+    with pd.ExcelWriter(mismatch, engine="openpyxl") as writer:
+        pd.DataFrame([["Id/Iq", 0, 1], [0, 1, 1], [-1, 1, 1]]).to_excel(
+            writer, sheet_name="Ld", header=False, index=False
+        )
+        pd.DataFrame([["Id/Iq", 0, 2], [0, 1, 1], [-1, 1, 1]]).to_excel(
+            writer, sheet_name="Lq", header=False, index=False
+        )
+    with pytest.raises(ValueError, match="Id/Iq轴不一致"):
+        load_ld_lq_workbook(mismatch)
+
+    blank = tmp_path / "blank.xlsx"
+    with pd.ExcelWriter(blank, engine="openpyxl") as writer:
+        frame = pd.DataFrame([["Id/Iq", 0, 1], [0, 1, None], [-1, 1, 1]])
+        frame.to_excel(writer, sheet_name="Ld", header=False, index=False)
+        frame.to_excel(writer, sheet_name="Lq", header=False, index=False)
+    with pytest.raises(ValueError, match="发现空白单元格"):
+        load_ld_lq_workbook(blank)
 
 
 def test_saturation_and_connection_project_round_trip(tmp_path):

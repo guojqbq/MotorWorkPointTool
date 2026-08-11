@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -143,6 +144,8 @@ class ParameterPanel(QWidget):
     exportImagesRequested = Signal()
     importSaturationRequested = Signal()
     previewSaturationRequested = Signal()
+    showSaturationFormatRequested = Signal()
+    exportSaturationTemplateRequested = Signal()
     saveCaseRequested = Signal()
     loadCaseRequested = Signal()
     deleteCaseRequested = Signal()
@@ -183,8 +186,13 @@ class ParameterPanel(QWidget):
 
         motor_group = QWidget()
         motor_form = QFormLayout(motor_group)
+        self.motor_form = motor_form
         motor_form.setContentsMargins(8, 4, 8, 6)
-        motor_form.setVerticalSpacing(4)
+        motor_form.setVerticalSpacing(5)
+        motor_form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        motor_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
         self.pole_pairs = QSpinBox()
         self.pole_pairs.setRange(1, 100)
         self.rs_ohm = self._double_spin(0, 100, 6, " Ω")
@@ -223,6 +231,21 @@ class ParameterPanel(QWidget):
         map_buttons.addWidget(self.import_saturation_button)
         map_buttons.addWidget(self.preview_saturation_button)
         inductance_layout.addLayout(map_buttons)
+        self.saturation_format_hint = QLabel(
+            "Excel需包含 Ld、Lq 两个 Sheet。\n"
+            "第一行 = Iq(A)，第一列 = Id(A)，矩阵 = 电感值。"
+        )
+        self.saturation_format_hint.setWordWrap(True)
+        self.saturation_format_hint.setProperty("role", "formatHint")
+        inductance_layout.addWidget(self.saturation_format_hint)
+        format_buttons = QHBoxLayout()
+        format_buttons.setContentsMargins(0, 0, 0, 0)
+        format_buttons.setSpacing(4)
+        self.saturation_format_button = QPushButton("查看格式示例")
+        self.saturation_template_button = QPushButton("导出 Excel 模板")
+        format_buttons.addWidget(self.saturation_format_button)
+        format_buttons.addWidget(self.saturation_template_button)
+        inductance_layout.addLayout(format_buttons)
         self.saturation_map_status = QLabel("尚未导入饱和电感 Map")
         self.saturation_map_status.setWordWrap(True)
         self.saturation_map_status.setProperty("role", "muted")
@@ -497,10 +520,7 @@ class ParameterPanel(QWidget):
 
         realtime_group = QGroupBox("计算控制")
         realtime_layout = QFormLayout(realtime_group)
-        self.cancel_button = QPushButton("取消当前计算")
         self.clear_cache_button = QPushButton("清除计算缓存")
-        self.cancel_button.setEnabled(False)
-        realtime_layout.addRow(self.cancel_button)
         realtime_layout.addRow(self.clear_cache_button)
         advanced_layout.addWidget(realtime_group)
         advanced_layout.addStretch(1)
@@ -542,6 +562,36 @@ class ParameterPanel(QWidget):
         self.exit_button = QPushButton("退出")
 
         content_layout.addWidget(self.calculate_button)
+
+        self.calculation_progress_card = QFrame()
+        self.calculation_progress_card.setProperty("role", "progressCard")
+        progress_layout = QVBoxLayout(self.calculation_progress_card)
+        progress_layout.setContentsMargins(12, 10, 12, 10)
+        progress_layout.setSpacing(7)
+        self.calculation_stage_label = QLabel("准备计算")
+        self.calculation_stage_label.setProperty("role", "progressTitle")
+        self.calculation_progress_bar = QProgressBar()
+        self.calculation_progress_bar.setRange(0, 100)
+        self.calculation_progress_bar.setValue(0)
+        self.calculation_progress_bar.setMinimumHeight(22)
+        self.calculation_progress_bar.setFormat("%p%")
+        self.calculation_point_label = QLabel("已完成 0 / 0")
+        self.calculation_point_label.setProperty("role", "muted")
+        self.calculation_elapsed_label = QLabel("用时 0.0 s")
+        self.calculation_elapsed_label.setProperty("role", "muted")
+        detail_row = QHBoxLayout()
+        detail_row.addWidget(self.calculation_point_label)
+        detail_row.addStretch(1)
+        detail_row.addWidget(self.calculation_elapsed_label)
+        self.cancel_button = QPushButton("取消计算")
+        self.cancel_button.setProperty("role", "danger")
+        self.cancel_button.setEnabled(False)
+        progress_layout.addWidget(self.calculation_stage_label)
+        progress_layout.addWidget(self.calculation_progress_bar)
+        progress_layout.addLayout(detail_row)
+        progress_layout.addWidget(self.cancel_button)
+        self.calculation_progress_card.setVisible(False)
+        content_layout.addWidget(self.calculation_progress_card)
         self._add_button_row(
             content_layout, self.restore_button, self.save_button, self.load_button
         )
@@ -553,6 +603,18 @@ class ParameterPanel(QWidget):
         )
         self._add_button_row(content_layout, self.export_images_button, self.exit_button)
         content_layout.addStretch(1)
+
+        # Keep the primary action and its live state visible even when the
+        # parameter scroll area is long (for example in saturation mode).
+        content_layout.removeWidget(self.calculate_button)
+        content_layout.removeWidget(self.calculation_progress_card)
+        self.fixed_calculation_area = QWidget()
+        fixed_layout = QVBoxLayout(self.fixed_calculation_area)
+        fixed_layout.setContentsMargins(8, 4, 8, 8)
+        fixed_layout.setSpacing(6)
+        fixed_layout.addWidget(self.calculate_button)
+        fixed_layout.addWidget(self.calculation_progress_card)
+        root_layout.addWidget(self.fixed_calculation_area, 0)
 
         self.calculate_button.clicked.connect(self.calculateRequested)
         self.cancel_button.clicked.connect(self.cancelRequested)
@@ -570,6 +632,12 @@ class ParameterPanel(QWidget):
         )
         self.preview_saturation_button.clicked.connect(
             self.previewSaturationRequested
+        )
+        self.saturation_format_button.clicked.connect(
+            self.showSaturationFormatRequested
+        )
+        self.saturation_template_button.clicked.connect(
+            self.exportSaturationTemplateRequested
         )
         self.save_case_button.clicked.connect(self.saveCaseRequested)
         self.load_case_button.clicked.connect(self.loadCaseRequested)
@@ -718,8 +786,8 @@ class ParameterPanel(QWidget):
             str(self.inductance_model.currentData())
             == InductanceModel.SATURATION_MAP.value
         )
-        self.ld_mh.setEnabled(not saturation)
-        self.lq_mh.setEnabled(not saturation)
+        self.motor_form.setRowVisible(self.ld_mh, not saturation)
+        self.motor_form.setRowVisible(self.lq_mh, not saturation)
         self.saturation_map_controls.setVisible(saturation)
         self.import_saturation_button.setEnabled(saturation)
         self.preview_saturation_button.setEnabled(
@@ -1039,6 +1107,73 @@ class ParameterPanel(QWidget):
         self.calculate_button.setEnabled(not calculating)
         self.cancel_button.setEnabled(calculating)
         self._update_calculate_button()
+
+    def start_progress(self) -> None:
+        self.calculation_progress_card.setProperty("state", "running")
+        self._refresh_progress_card_style()
+        self.calculation_progress_card.setVisible(True)
+        self.calculation_stage_label.setText("正在计算：参数校验")
+        self.calculation_progress_bar.setValue(0)
+        self.calculation_point_label.setText("已完成 0 / 1")
+        self.calculation_elapsed_label.setText("用时 0.0 s")
+
+    def update_progress(self, progress: int) -> None:
+        self.calculation_progress_bar.setValue(
+            max(0, min(100, int(progress)))
+        )
+
+    def update_progress_stage(
+        self, stage: str, completed: int, total: int
+    ) -> None:
+        label = {
+            "内部 Map": "内部工作点",
+            "损耗效率": "损耗/效率 Map",
+            "绘图刷新": "图形刷新",
+        }.get(stage, stage)
+        self.calculation_stage_label.setText(f"正在计算：{label}")
+        self.calculation_point_label.setText(
+            f"已完成 {int(completed):,} / {max(0, int(total)):,}"
+        )
+
+    def update_progress_elapsed(self, elapsed_seconds: float) -> None:
+        self.calculation_elapsed_label.setText(
+            f"用时 {max(0.0, float(elapsed_seconds)):.1f} s"
+        )
+
+    def finish_progress(self, state: str, elapsed_seconds: float) -> None:
+        if state == "completed":
+            title = "计算完成 100%"
+            value = 100
+        elif state == "cancelled":
+            title = "已取消"
+            value = self.calculation_progress_bar.value()
+        else:
+            title = "计算失败"
+            value = self.calculation_progress_bar.value()
+        self.calculation_progress_card.setProperty("state", state)
+        self._refresh_progress_card_style()
+        self.calculation_progress_card.setVisible(True)
+        self.calculation_stage_label.setText(title)
+        self.calculation_progress_bar.setValue(value)
+        self.calculation_elapsed_label.setText(
+            f"用时 {max(0.0, float(elapsed_seconds)):.1f} s"
+        )
+        self.cancel_button.setEnabled(False)
+
+    def hide_completed_progress(self) -> None:
+        if (
+            not self._calculating
+            and self.calculation_progress_card.property("state") == "completed"
+        ):
+            self.calculation_progress_card.setVisible(False)
+
+    def _refresh_progress_card_style(self) -> None:
+        self.calculation_progress_card.style().unpolish(
+            self.calculation_progress_card
+        )
+        self.calculation_progress_card.style().polish(
+            self.calculation_progress_card
+        )
 
     def set_result_available(self, available: bool) -> None:
         self._has_result = available
