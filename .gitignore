@@ -1,14 +1,27 @@
-__pycache__/
+# Python environments and caches
+.venv/
+venv/
+**/__pycache__/
 *.py[cod]
 .pytest_cache/
-.venv/
+.cache/
+cache/
+
+# Build, packaging and runtime output
 build/
 dist/
 release/
-cases/
 .release-*/
+artifacts/
+logs/
+*.log
+*.exe
+*.zip
 *.spec.bak
+
+# User-generated calculation output
+cases/
 *.csv
 *.png
 !docs/*.png
-artifacts/
+!examples/**/*.csv
