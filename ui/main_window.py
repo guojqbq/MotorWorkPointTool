@@ -188,7 +188,14 @@ class MainWindow(QMainWindow):
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setSizes([340, 1260])
-        self.setCentralWidget(self.main_splitter)
+        central_widget = QWidget()
+        central_layout = QVBoxLayout(central_widget)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        self.top_action_bar = self.parameter_panel.fixed_calculation_area
+        central_layout.addWidget(self.top_action_bar, 0)
+        central_layout.addWidget(self.main_splitter, 1)
+        self.setCentralWidget(central_widget)
         self.statusBar().addPermanentWidget(self.stage_label, 1)
         self.statusBar().addPermanentWidget(self.progress_bar)
         self.statusBar().addPermanentWidget(self.elapsed_label)
@@ -469,7 +476,7 @@ class MainWindow(QMainWindow):
             "map": settings.calculation_dict(),
             "profile": profile,
             "algorithm": OPERATING_MAP_ALGORITHM_VERSION,
-            "external_algorithm": "envelope-2.1",
+            "external_algorithm": "envelope-2.2",
         }
         serialized = json.dumps(
             payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -580,10 +587,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"参数无效：{str(exc).splitlines()[0]}；旧结果已过期"
             )
+            self.parameter_panel.set_action_status(
+                "参数无效，结果已过期", state="stale"
+            )
             return
         self._dirty = True
         self._set_results_stale(self._analysis_result is not None)
         self.statusBar().showMessage("参数已修改，请点击开始计算")
+        self.parameter_panel.set_action_status(
+            "参数已修改，结果已过期", state="stale"
+        )
 
     def _set_results_stale(self, stale: bool) -> None:
         self._results_stale = bool(stale)

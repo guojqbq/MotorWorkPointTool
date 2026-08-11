@@ -48,13 +48,24 @@ QLabel[role="derived"] {
     color: #1849A9;
     padding: 9px;
 }
-QFrame[role="plotCard"], QFrame[role="progressCard"] {
+QFrame[role="plotCard"] {
     background: #FFFFFF;
     border: 1px solid #D8DEE8;
     border-radius: 8px;
 }
+QFrame[role="topActionBar"] {
+    background: #FFFFFF;
+    border: none;
+    border-bottom: 1px solid #D8DEE8;
+}
+QFrame[role="topActionBar"][state="stale"] QLabel[role="progressTitle"] {
+    color: #B54708;
+}
 QFrame[role="progressCard"] {
+    background: #F8FAFC;
+    border: 1px solid #D8DEE8;
     border-left: 4px solid #2563EB;
+    border-radius: 7px;
 }
 QFrame[role="progressCard"][state="completed"] {
     border-left-color: #16A34A;
@@ -182,18 +193,6 @@ QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QLineEdit:focus {
 QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QLineEdit:disabled {
     color: #98A2B3;
     background: #F2F4F7;
-}
-QSpinBox::up-button, QDoubleSpinBox::up-button,
-QSpinBox::down-button, QDoubleSpinBox::down-button {
-    width: 18px;
-    background: #F8FAFC;
-    border-left: 1px solid #E4E7EC;
-}
-QSpinBox::up-button, QDoubleSpinBox::up-button {
-    border-top-right-radius: 6px;
-}
-QSpinBox::down-button, QDoubleSpinBox::down-button {
-    border-bottom-right-radius: 6px;
 }
 QComboBox::drop-down {
     width: 25px;

@@ -8,12 +8,13 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
     QWidget,
 )
+
+from ui.numeric_inputs import NoWheelDoubleSpinBox
 
 from models.operating_map import OperatingMapResult
 from ui.operating_point_table import OperatingPointTable
@@ -28,8 +29,8 @@ class OperatingMapTable(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         controls = QHBoxLayout()
         self.speed_filter = QComboBox()
-        self.torque_min = QDoubleSpinBox()
-        self.torque_max = QDoubleSpinBox()
+        self.torque_min = NoWheelDoubleSpinBox()
+        self.torque_max = NoWheelDoubleSpinBox()
         for spinbox in (self.torque_min, self.torque_max):
             spinbox.setRange(0.0, 1e9)
             spinbox.setDecimals(2)
@@ -43,8 +44,8 @@ class OperatingMapTable(QWidget):
         self.region_filter.addItem("电压约束激活", "voltage")
         self.region_filter.addItem("弱磁/MTPV", "field_weakening")
         self.efficiency_filter_enabled = QCheckBox("效率范围")
-        self.efficiency_min = QDoubleSpinBox()
-        self.efficiency_max = QDoubleSpinBox()
+        self.efficiency_min = NoWheelDoubleSpinBox()
+        self.efficiency_max = NoWheelDoubleSpinBox()
         for spinbox in (self.efficiency_min, self.efficiency_max):
             spinbox.setRange(0.0, 100.0)
             spinbox.setDecimals(1)

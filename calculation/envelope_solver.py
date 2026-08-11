@@ -109,11 +109,13 @@ class EnvelopeSolver:
         total = len(speeds)
         feasible_count = 0
         failed_count = 0
+        previous_id_a: float | None = None
         for index, speed_rpm in enumerate(speeds):
             if cancel_check is not None and cancel_check():
                 raise InterruptedError("计算已取消。")
             point_started = perf_counter()
             try:
+                self._continuation_id_a = previous_id_a
                 point = self.solve_speed(float(speed_rpm))
             except Exception as exc:
                 failed_count += 1
@@ -142,6 +144,7 @@ class EnvelopeSolver:
                     f"{self.settings.timeout_seconds:.3f} s 限制。"
                 )
             points.append(point)
+            previous_id_a = point.id_a if point.valid else previous_id_a
             feasible_count += int(point.valid)
             failed_count += int(not point.valid)
             if diagnostic_callback is not None:
@@ -162,11 +165,16 @@ class EnvelopeSolver:
                 )
             if progress_callback is not None:
                 progress_callback(index + 1, total)
+        self._continuation_id_a = None
         return operating_points_to_dataframe(points)
 
-    def solve_speed(self, speed_rpm: float) -> OperatingPoint:
+    def solve_speed(
+        self, speed_rpm: float, *, initial_id_a: float | None = None
+    ) -> OperatingPoint:
         p = self.parameters
         limits = self.limits
+        if initial_id_a is None:
+            initial_id_a = getattr(self, "_continuation_id_a", None)
         id_lower = max(
             -limits.max_current_vector_a,
             p.id_min_peak_a
@@ -174,10 +182,42 @@ class EnvelopeSolver:
             else -limits.max_current_vector_a,
         )
         id_upper = limits.max_current_vector_a
+        if p.has_saturation_data:
+            assert p.ld_saturation_map is not None
+            assert p.lq_saturation_map is not None
+            id_lower = max(
+                id_lower,
+                p.ld_saturation_map.id_axis_a[0],
+                p.lq_saturation_map.id_axis_a[0],
+            )
+            id_upper = min(
+                id_upper,
+                p.ld_saturation_map.id_axis_a[-1],
+                p.lq_saturation_map.id_axis_a[-1],
+            )
 
-        coarse_ids = np.linspace(
-            id_lower, id_upper, self.settings.coarse_id_points
-        )
+        coarse_points = self.settings.coarse_id_points
+        if p.has_saturation_data:
+            assert p.ld_saturation_map is not None
+            assert p.lq_saturation_map is not None
+            id_cells = max(
+                len(p.ld_saturation_map.id_axis_a) - 1,
+                len(p.lq_saturation_map.id_axis_a) - 1,
+            )
+            coarse_points = min(coarse_points, max(301, 8 * id_cells + 1))
+        global_ids = np.linspace(id_lower, id_upper, coarse_points)
+        coarse_parts = [global_ids]
+        if p.has_saturation_data and initial_id_a is not None and np.isfinite(initial_id_a):
+            warm_span = max(12.0, 0.04 * limits.max_current_vector_a)
+            coarse_parts.append(
+                np.clip(
+                    float(initial_id_a)
+                    + np.linspace(-warm_span, warm_span, 161),
+                    id_lower,
+                    id_upper,
+                )
+            )
+        coarse_ids = np.unique(np.concatenate(coarse_parts))
         coarse_torque, coarse_iq = self._evaluate_id_candidates(
             coarse_ids, speed_rpm
         )
@@ -185,9 +225,7 @@ class EnvelopeSolver:
             return OperatingPoint.infeasible(speed_rpm)
 
         best_index = int(np.nanargmax(coarse_torque))
-        coarse_step = (id_upper - id_lower) / (
-            self.settings.coarse_id_points - 1
-        )
+        coarse_step = (id_upper - id_lower) / max(coarse_points - 1, 1)
         fine_lower = max(id_lower, coarse_ids[best_index] - 1.5 * coarse_step)
         fine_upper = min(id_upper, coarse_ids[best_index] + 1.5 * coarse_step)
         fine_ids = np.linspace(
@@ -315,30 +353,61 @@ class EnvelopeSolver:
 
         p = self.parameters
         limits = self.limits
+        assert p.ld_saturation_map is not None
+        assert p.lq_saturation_map is not None
         iq_upper = np.sqrt(
             np.maximum(limits.max_current_vector_a**2 - ids**2, 0.0)
         )
-        fractions = np.linspace(0.0, 1.0, 193)
-        iqs = iq_upper[:, None] * fractions[None, :]
-        id_grid = np.broadcast_to(ids[:, None], iqs.shape)
-        torque = electromagnetic_torque(id_grid, iqs, p)
-        ud_v, uq_v = dq_voltage(id_grid, iqs, speed_rpm, p)
-        feasible = (
-            np.isfinite(torque)
-            & (torque >= 0.0)
-            & (
-                ud_v**2 + uq_v**2
-                <= limits.max_voltage_dq_v**2 * (1.0 + 1e-9)
-            )
+        map_iq_lower = max(
+            0.0,
+            p.ld_saturation_map.iq_axis_a[0],
+            p.lq_saturation_map.iq_axis_a[0],
         )
-        if p.pmax_w is not None and speed_rpm > 0.0:
-            omega_m = speed_rpm * 2.0 * np.pi / 60.0
-            feasible &= torque * omega_m <= p.pmax_w * (1.0 + 1e-9)
-        objective = np.where(feasible, torque, -np.inf)
-        best = np.argmax(objective, axis=1)
+        map_iq_upper = min(
+            p.ld_saturation_map.iq_axis_a[-1],
+            p.lq_saturation_map.iq_axis_a[-1],
+        )
+        iq_lower = np.full_like(iq_upper, map_iq_lower)
+        iq_upper = np.minimum(iq_upper, map_iq_upper)
         row = np.arange(ids.size)
-        best_torque = objective[row, best]
-        best_iq = iqs[row, best]
+
+        def evaluate(iqs: np.ndarray) -> np.ndarray:
+            id_grid = np.broadcast_to(ids[:, None], iqs.shape)
+            torque = electromagnetic_torque(id_grid, iqs, p)
+            ud_v, uq_v = dq_voltage(id_grid, iqs, speed_rpm, p)
+            feasible = (
+                np.isfinite(torque)
+                & (torque >= 0.0)
+                & (iqs >= iq_lower[:, None])
+                & (iqs <= iq_upper[:, None])
+                & (
+                    ud_v**2 + uq_v**2
+                    <= limits.max_voltage_dq_v**2 * (1.0 + 1e-9)
+                )
+            )
+            if p.pmax_w is not None and speed_rpm > 0.0:
+                omega_m = speed_rpm * 2.0 * np.pi / 60.0
+                feasible &= torque * omega_m <= p.pmax_w * (1.0 + 1e-9)
+            return np.where(feasible, torque, -np.inf)
+
+        coarse_fractions = np.linspace(0.0, 1.0, 49)
+        coarse_iq = iq_lower[:, None] + (
+            iq_upper - iq_lower
+        )[:, None] * coarse_fractions[None, :]
+        coarse_objective = evaluate(coarse_iq)
+        coarse_best = np.argmax(coarse_objective, axis=1)
+        lower_fraction = np.maximum(coarse_best - 2, 0) / 48.0
+        upper_fraction = np.minimum(coarse_best + 2, 48) / 48.0
+        fine_fraction = lower_fraction[:, None] + (
+            upper_fraction - lower_fraction
+        )[:, None] * np.linspace(0.0, 1.0, 49)[None, :]
+        fine_iq = iq_lower[:, None] + (
+            iq_upper - iq_lower
+        )[:, None] * fine_fraction
+        fine_objective = evaluate(fine_iq)
+        fine_best = np.argmax(fine_objective, axis=1)
+        best_torque = fine_objective[row, fine_best]
+        best_iq = fine_iq[row, fine_best]
         valid = np.isfinite(best_torque)
         return (
             np.where(valid, best_torque, np.nan),

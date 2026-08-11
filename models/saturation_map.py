@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -21,11 +21,37 @@ class InductanceSaturationMap:
     iq_axis_a: tuple[float, ...]
     values_h: tuple[tuple[float, ...], ...]
     source_name: str = ""
+    _id_array: NDArray[np.float64] = field(init=False, repr=False, compare=False)
+    _iq_array: NDArray[np.float64] = field(init=False, repr=False, compare=False)
+    _values_array: NDArray[np.float64] = field(init=False, repr=False, compare=False)
+    _id_denominator: NDArray[np.float64] = field(
+        init=False, repr=False, compare=False
+    )
+    _iq_denominator: NDArray[np.float64] = field(
+        init=False, repr=False, compare=False
+    )
 
-    def validated(self) -> "InductanceSaturationMap":
+    def __post_init__(self) -> None:
         ids = np.asarray(self.id_axis_a, dtype=float)
         iqs = np.asarray(self.iq_axis_a, dtype=float)
         values = np.asarray(self.values_h, dtype=float)
+        errors = self._validation_errors(ids, iqs, values)
+        if errors:
+            raise ValueError("\n".join(errors))
+        for array in (ids, iqs, values):
+            array.setflags(write=False)
+        object.__setattr__(self, "_id_array", ids)
+        object.__setattr__(self, "_iq_array", iqs)
+        object.__setattr__(self, "_values_array", values)
+        object.__setattr__(self, "_id_denominator", np.diff(ids))
+        object.__setattr__(self, "_iq_denominator", np.diff(iqs))
+
+    @staticmethod
+    def _validation_errors(
+        ids: NDArray[np.float64],
+        iqs: NDArray[np.float64],
+        values: NDArray[np.float64],
+    ) -> list[str]:
         errors: list[str] = []
         if ids.ndim != 1 or ids.size < 2 or not np.all(np.isfinite(ids)):
             errors.append("Id 轴至少需要两个有限数值点。")
@@ -41,8 +67,9 @@ class InductanceSaturationMap:
             )
         elif not np.all(np.isfinite(values)) or np.any(values <= 0.0):
             errors.append("电感矩阵必须全部为有限正数。")
-        if errors:
-            raise ValueError("\n".join(errors))
+        return errors
+
+    def validated(self) -> "InductanceSaturationMap":
         return self
 
     @classmethod
@@ -71,15 +98,14 @@ class InductanceSaturationMap:
                 tuple(float(value) for value in row) for row in values
             ),
             source_name=str(source_name),
-        ).validated()
+        )
 
     def interpolate_h(
         self, id_a: ArrayLike, iq_a: ArrayLike
     ) -> NDArray[np.float64]:
-        self.validated()
-        ids = np.asarray(self.id_axis_a, dtype=float)
-        iqs = np.asarray(self.iq_axis_a, dtype=float)
-        values = np.asarray(self.values_h, dtype=float)
+        ids = self._id_array
+        iqs = self._iq_array
+        values = self._values_array
         id_values, iq_values = np.broadcast_arrays(
             np.asarray(id_a, dtype=float), np.asarray(iq_a, dtype=float)
         )
@@ -93,8 +119,8 @@ class InductanceSaturationMap:
         clipped_iq = np.clip(iq_values, iqs[0], iqs[-1])
         id_index = np.clip(np.searchsorted(ids, clipped_id, side="right") - 1, 0, ids.size - 2)
         iq_index = np.clip(np.searchsorted(iqs, clipped_iq, side="right") - 1, 0, iqs.size - 2)
-        id_weight = (clipped_id - ids[id_index]) / (ids[id_index + 1] - ids[id_index])
-        iq_weight = (clipped_iq - iqs[iq_index]) / (iqs[iq_index + 1] - iqs[iq_index])
+        id_weight = (clipped_id - ids[id_index]) / self._id_denominator[id_index]
+        iq_weight = (clipped_iq - iqs[iq_index]) / self._iq_denominator[iq_index]
         v00 = values[id_index, iq_index]
         v10 = values[id_index + 1, iq_index]
         v01 = values[id_index, iq_index + 1]

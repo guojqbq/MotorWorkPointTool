@@ -1,0 +1,56 @@
+{
+  "date": "2026-08-11",
+  "machine_note": "same Windows host, Python 3.12, full solver profile",
+  "baseline_version": "0.4.2",
+  "optimized_version": "0.5.0",
+  "constant_11x11": {
+    "before_total_s": 0.04095,
+    "after_total_s": 0.04563,
+    "before_map_s": 0.01972,
+    "after_map_s": 0.02428,
+    "solver_failed_before": 0,
+    "solver_failed_after": 0
+  },
+  "saturation_11x11": {
+    "before_external_s": 4.96972,
+    "after_external_s": 0.49982,
+    "before_map_s": 1.26144,
+    "after_map_s": 0.37564,
+    "before_total_s": 6.23116,
+    "after_total_s": 0.87547,
+    "speedup": 7.12,
+    "solver_failed_before": 0,
+    "solver_failed_after": 0
+  },
+  "constant_81x121": {
+    "before_external_s": 0.15163,
+    "after_external_s": 0.19153,
+    "before_map_s": 1.62761,
+    "after_map_s": 1.61730,
+    "before_total_s": 1.77925,
+    "after_total_s": 1.80883,
+    "solver_failed_before": 0,
+    "solver_failed_after": 0
+  },
+  "saturation_81x121": {
+    "before_external_s": 41.92386,
+    "after_external_s": 3.70153,
+    "before_map_s": 301.04889,
+    "after_map_s": 23.73782,
+    "before_total_s": 342.97275,
+    "after_total_s": 27.43935,
+    "before_average_point_ms": 30.71614,
+    "after_average_point_ms": 2.42198,
+    "before_maximum_point_ms": 43.29863,
+    "after_maximum_point_ms": 3.17468,
+    "speedup": 12.5,
+    "solver_failed_before": 1,
+    "solver_failed_after": 1,
+    "before_inductance_points": 1444210586,
+    "after_inductance_points": 324522935,
+    "before_torque_points": 1396897534,
+    "after_torque_points": 309803881,
+    "before_optimize_calls": 162,
+    "after_optimize_calls": 0
+  }
+}

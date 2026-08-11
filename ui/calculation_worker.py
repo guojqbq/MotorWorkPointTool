@@ -276,6 +276,7 @@ class CalculationWorker(QObject):
         initial_id = float(event.get("initial_id_a", float("nan")))
         initial_iq = float(event.get("initial_iq_a", float("nan")))
         iterations = int(event.get("iterations", 0))
+        warm_start = bool(event.get("warm_start_used", False))
         feasible = int(event.get("feasible_count", 0))
         failed = int(event.get("failed_count", 0))
         completed = int(event.get("completed", 0))
@@ -291,7 +292,7 @@ class CalculationWorker(QObject):
         message = (
             "%s speed_index=%d torque_index=%d speed_rpm=%.6g "
             "torque_nm=%.6g solver_elapsed_s=%.6f status=%s "
-            "initial_id_a=%.6g initial_iq_a=%.6g iterations=%d "
+            "initial_id_a=%.6g initial_iq_a=%.6g iterations=%d warm_start=%s "
             "row_elapsed_s=%.6f feasible=%d failed=%d"
         )
         values = (
@@ -305,6 +306,7 @@ class CalculationWorker(QObject):
             initial_id,
             initial_iq,
             iterations,
+            warm_start,
             row_elapsed,
             feasible,
             failed,

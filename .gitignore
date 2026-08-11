@@ -11,3 +11,4 @@ cases/
 *.csv
 *.png
 !docs/*.png
+artifacts/

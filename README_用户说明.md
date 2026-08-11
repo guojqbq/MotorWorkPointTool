@@ -1,8 +1,8 @@
-# PMSM 性能分析工具 v0.4.2
+# PMSM 性能分析工具 v0.5.0
 
 ## 启动
 
-解压发布 ZIP，进入 `PMSM_Performance_Tool_v0.4.2`，双击
+解压发布 ZIP，进入 `PMSM_Performance_Tool_v0.5.0`，双击
 `PMSMPerformanceTool.exe`。请保留 `_internal` 目录与程序在同一目录。
 
 ## 输入方式

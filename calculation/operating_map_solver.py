@@ -47,7 +47,7 @@ ProgressCallback = Callable[[int, int], None]
 CancelCheck = Callable[[], bool]
 DiagnosticCallback = Callable[[dict], None]
 
-OPERATING_MAP_ALGORITHM_VERSION = "operating-map-3.1"
+OPERATING_MAP_ALGORITHM_VERSION = "operating-map-3.2"
 
 
 class OperatingMapSolver:
@@ -66,6 +66,10 @@ class OperatingMapSolver:
         self.limits = (
             limits or ResolvedCharacteristicLimits.from_legacy_motor(parameters)
         ).validated()
+        self._reference_cache: dict[
+            tuple[float, str, bytes],
+            tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        ] = {}
 
     def solve(
         self,
@@ -231,6 +235,7 @@ class OperatingMapSolver:
         feasible_count = 0
         failed_count = 0
         total_points = speed_count * torque_count
+        previous_speed_ids: np.ndarray | None = None
         for speed_index, speed_rpm in enumerate(speeds):
             if cancel_check is not None and cancel_check():
                 raise InterruptedError("计算已取消。")
@@ -245,6 +250,11 @@ class OperatingMapSolver:
             else:
                 requests = torque_ratios * maximum_torque[speed_index]
                 local_ratios = torque_ratios
+            row_initial_ids = (
+                None
+                if previous_speed_ids is None
+                else previous_speed_ids.copy()
+            )
             row_started = perf_counter()
             try:
                 speed_records = self._solve_speed_row(
@@ -257,6 +267,7 @@ class OperatingMapSolver:
                     external.iloc[speed_index],
                     profile,
                     float(maximum_torque[speed_index]),
+                    previous_speed_ids,
                 )
             except Exception as exc:
                 if diagnostic_callback is not None:
@@ -286,6 +297,15 @@ class OperatingMapSolver:
                     f"{self.settings.solver_timeout_seconds:.3f} s 限制。"
                 )
             records.extend(speed_records)
+            previous_speed_ids = np.asarray(
+                [
+                    float(record["Id_A"])
+                    if bool(record["IsFeasible"])
+                    else np.nan
+                    for record in speed_records
+                ],
+                dtype=float,
+            )
             for record in speed_records:
                 if cancel_check is not None and cancel_check():
                     raise InterruptedError("计算已取消。")
@@ -308,13 +328,27 @@ class OperatingMapSolver:
                             "row_elapsed_seconds": row_elapsed,
                             "status": status,
                             "initial_id_a": float(
-                                external.iloc[speed_index].get("Id_A", np.nan)
+                                row_initial_ids[int(record["TorqueIndex"])]
+                                if row_initial_ids is not None
+                                and np.isfinite(
+                                    row_initial_ids[int(record["TorqueIndex"])]
+                                )
+                                else external.iloc[speed_index].get(
+                                    "Id_A", np.nan
+                                )
                             ),
                             "initial_iq_a": float(
                                 external.iloc[speed_index].get("Iq_A", np.nan)
                             ),
                             "iterations": (
-                                48 if calculation_parameters.has_saturation_data else 0
+                                32 if calculation_parameters.has_saturation_data else 0
+                            ),
+                            "warm_start_used": bool(
+                                calculation_parameters.has_saturation_data
+                                and row_initial_ids is not None
+                                and np.isfinite(
+                                    row_initial_ids[int(record["TorqueIndex"])]
+                                )
                             ),
                             "feasible_count": feasible_count,
                             "failed_count": failed_count,
@@ -414,6 +448,7 @@ class OperatingMapSolver:
         external_row: pd.Series,
         profile: str,
         maximum_torque_nm: float,
+        previous_speed_ids: np.ndarray | None = None,
     ) -> list[dict]:
         count = len(requests)
         current_limit = limits.max_current_vector_a
@@ -435,6 +470,7 @@ class OperatingMapSolver:
                 profile,
                 maximum_torque_nm,
                 id_lower,
+                previous_speed_ids,
             )
         grid_points = 801 if profile == "preview" else 1601
         ids = np.linspace(id_lower, current_limit, grid_points)
@@ -732,7 +768,10 @@ class OperatingMapSolver:
         )
         lower = np.zeros_like(upper)
         high = upper.copy()
-        for _ in range(48):
+        # 32 bisections resolve a 400 A interval below 1e-7 A, comfortably
+        # tighter than the torque equality tolerance while avoiding 16
+        # redundant full-Map interpolation passes from the former loop.
+        for _ in range(32):
             middle = 0.5 * (lower + high)
             torque = electromagnetic_torque(ids, middle, parameters)
             above = np.isfinite(torque) & (torque >= target)
@@ -757,82 +796,192 @@ class OperatingMapSolver:
         profile: str,
         maximum_torque_nm: float,
         id_lower: float,
+        previous_speed_ids: np.ndarray | None,
     ) -> list[dict]:
         """Independent fixed-torque solve using Ld(Id,Iq)/Lq(Id,Iq)."""
 
         count = len(requests)
         current_limit = limits.max_current_vector_a
-        grid_points = 601 if profile == "preview" else 1001
-        ids = np.linspace(id_lower, 0.0, grid_points)
-        iq_upper = np.sqrt(np.maximum(current_limit**2 - ids**2, 0.0))
-        id_grid = np.broadcast_to(ids[None, :], (count, ids.size))
-        upper_grid = np.broadcast_to(iq_upper[None, :], id_grid.shape)
-        target_grid = np.broadcast_to(requests[:, None], id_grid.shape)
-        iqs, root_valid = self._saturated_iq_for_torque(
-            parameters, target_grid, id_grid, upper_grid
-        )
-        current_squared = id_grid**2 + iqs**2
-        ud_v, uq_v = dq_voltage(id_grid, iqs, speed_rpm, parameters)
         inside_envelope = requests <= maximum_torque_nm + max(
             1e-8, abs(maximum_torque_nm) * 1e-9
         )
-        candidate = (
-            root_valid
-            & (current_squared <= current_limit**2 * (1.0 + 1e-9))
-            & (
-                ud_v**2 + uq_v**2
-                <= limits.max_voltage_dq_v**2 * (1.0 + 1e-9)
-            )
-            & inside_envelope[:, None]
-        )
         output_power = requests * speed_rpm * 2.0 * np.pi / 60.0
-        if parameters.pmax_w is not None:
-            candidate &= output_power[:, None] <= parameters.pmax_w * (1.0 + 1e-9)
-        objective = np.where(candidate, current_squared, np.inf)
-        best = np.argmin(objective, axis=1)
         row = np.arange(count)
-        feasible = np.isfinite(objective[row, best])
-        selected_id = ids[best]
-        selected_iq = iqs[row, best]
 
-        step = (0.0 - id_lower) / max(grid_points - 1, 1)
-        refined_ids = np.clip(
-            selected_id[:, None] + np.linspace(-1.5, 1.5, 101)[None, :] * step,
-            id_lower,
-            0.0,
-        )
-        refined_upper = np.sqrt(
-            np.maximum(current_limit**2 - refined_ids**2, 0.0)
-        )
-        refined_target = np.broadcast_to(requests[:, None], refined_ids.shape)
-        refined_iq, refined_root_valid = self._saturated_iq_for_torque(
-            parameters, refined_target, refined_ids, refined_upper
-        )
-        refined_current = refined_ids**2 + refined_iq**2
-        refined_ud, refined_uq = dq_voltage(
-            refined_ids, refined_iq, speed_rpm, parameters
-        )
-        refined_valid = (
-            refined_root_valid
-            & (refined_current <= current_limit**2 * (1.0 + 1e-9))
-            & (
-                refined_ud**2 + refined_uq**2
-                <= limits.max_voltage_dq_v**2 * (1.0 + 1e-9)
+        def evaluate(
+            candidate_ids: np.ndarray,
+            indices: np.ndarray | None = None,
+        ):
+            local_requests = requests if indices is None else requests[indices]
+            local_inside = (
+                inside_envelope if indices is None else inside_envelope[indices]
             )
-            & inside_envelope[:, None]
+            local_power = output_power if indices is None else output_power[indices]
+            upper = np.sqrt(
+                np.maximum(current_limit**2 - candidate_ids**2, 0.0)
+            )
+            target = np.broadcast_to(
+                local_requests[:, None], candidate_ids.shape
+            )
+            candidate_iq, root_valid = self._saturated_iq_for_torque(
+                parameters, target, candidate_ids, upper
+            )
+            current_squared = candidate_ids**2 + candidate_iq**2
+            ud_v, uq_v = dq_voltage(
+                candidate_ids, candidate_iq, speed_rpm, parameters
+            )
+            valid = (
+                root_valid
+                & (current_squared <= current_limit**2 * (1.0 + 1e-9))
+                & (
+                    ud_v**2 + uq_v**2
+                    <= limits.max_voltage_dq_v**2 * (1.0 + 1e-9)
+                )
+                & local_inside[:, None]
+            )
+            if parameters.pmax_w is not None:
+                valid &= (
+                    local_power[:, None]
+                    <= parameters.pmax_w * (1.0 + 1e-9)
+                )
+            return candidate_iq, np.where(valid, current_squared, np.inf)
+
+        global_points = 201 if profile == "preview" else 301
+        global_ids = np.linspace(id_lower, 0.0, global_points)
+        candidate_parts = [
+            np.broadcast_to(global_ids[None, :], (count, global_points))
+        ]
+        warm_span = max(12.0, 0.04 * current_limit)
+        if previous_speed_ids is not None and len(previous_speed_ids) == count:
+            seeds = np.asarray(previous_speed_ids, dtype=float)
+            fallback = np.full(count, 0.5 * (id_lower + 0.0))
+            seeds = np.where(np.isfinite(seeds), seeds, fallback)
+            warm_ids = np.clip(
+                seeds[:, None]
+                + np.linspace(-warm_span, warm_span, 81)[None, :],
+                id_lower,
+                0.0,
+            )
+            candidate_parts.append(warm_ids)
+        candidate_ids = np.concatenate(candidate_parts, axis=1)
+        candidate_iq, objective = evaluate(candidate_ids)
+        best = np.argmin(objective, axis=1)
+        feasible = np.isfinite(objective[row, best])
+        selected_id = candidate_ids[row, best]
+        selected_iq = candidate_iq[row, best]
+
+        global_step = (0.0 - id_lower) / max(global_points - 1, 1)
+        adjacent_center = np.concatenate(
+            (selected_id[:1], selected_id[:-1])
         )
-        if parameters.pmax_w is not None:
-            refined_valid &= output_power[:, None] <= parameters.pmax_w * (1.0 + 1e-9)
-        refined_objective = np.where(refined_valid, refined_current, np.inf)
+        centers = [selected_id, adjacent_center]
+        if previous_speed_ids is not None and len(previous_speed_ids) == count:
+            previous = np.asarray(previous_speed_ids, dtype=float)
+            centers.append(np.where(np.isfinite(previous), previous, selected_id))
+        refine_offsets = np.linspace(-2.0, 2.0, 41) * global_step
+        refined_ids = np.concatenate(
+            [
+                np.clip(
+                    center[:, None] + refine_offsets[None, :],
+                    id_lower,
+                    0.0,
+                )
+                for center in centers
+            ],
+            axis=1,
+        )
+        refined_iq, refined_objective = evaluate(refined_ids)
         refined_best = np.argmin(refined_objective, axis=1)
-        refined_feasible = np.isfinite(refined_objective[row, refined_best])
-        use_refined = feasible & refined_feasible
+        use_refined = np.isfinite(refined_objective[row, refined_best])
         selected_id = np.where(
             use_refined, refined_ids[row, refined_best], selected_id
         )
         selected_iq = np.where(
             use_refined, refined_iq[row, refined_best], selected_iq
         )
+        feasible |= use_refined
+
+        refine_step = 4.0 * global_step / 40.0
+        fine_ids = np.clip(
+            selected_id[:, None]
+            + np.linspace(-2.0, 2.0, 41)[None, :] * refine_step,
+            id_lower,
+            0.0,
+        )
+        fine_iq, fine_objective = evaluate(fine_ids)
+        fine_best = np.argmin(fine_objective, axis=1)
+        use_fine = np.isfinite(fine_objective[row, fine_best])
+        selected_id = np.where(
+            use_fine, fine_ids[row, fine_best], selected_id
+        )
+        selected_iq = np.where(
+            use_fine, fine_iq[row, fine_best], selected_iq
+        )
+        feasible |= use_fine
+
+        # A voltage/current intersection can become narrower than the global
+        # continuation grid at isolated boundary points. Re-run only those
+        # missed in-envelope targets on the former full grid; normal points
+        # retain the fast continuation path and numerical robustness is not
+        # traded for speed.
+        missed = np.flatnonzero(inside_envelope & ~feasible)
+        if missed.size:
+            fallback_points = 601 if profile == "preview" else 1001
+            fallback_axis = np.linspace(id_lower, 0.0, fallback_points)
+            fallback_ids = np.broadcast_to(
+                fallback_axis[None, :], (missed.size, fallback_points)
+            )
+            fallback_iq, fallback_objective = evaluate(
+                fallback_ids, missed
+            )
+            fallback_row = np.arange(missed.size)
+            fallback_best = np.argmin(fallback_objective, axis=1)
+            recovered = np.isfinite(
+                fallback_objective[fallback_row, fallback_best]
+            )
+            recovered_indices = missed[recovered]
+            if recovered_indices.size:
+                recovered_best = fallback_best[recovered]
+                recovered_row = fallback_row[recovered]
+                selected_id[recovered_indices] = fallback_ids[
+                    recovered_row, recovered_best
+                ]
+                selected_iq[recovered_indices] = fallback_iq[
+                    recovered_row, recovered_best
+                ]
+                feasible[recovered_indices] = True
+                fallback_step = (0.0 - id_lower) / max(
+                    fallback_points - 1, 1
+                )
+                fallback_refined_ids = np.clip(
+                    selected_id[recovered_indices, None]
+                    + np.linspace(-1.5, 1.5, 101)[None, :]
+                    * fallback_step,
+                    id_lower,
+                    0.0,
+                )
+                fallback_refined_iq, fallback_refined_objective = evaluate(
+                    fallback_refined_ids, recovered_indices
+                )
+                recovered_row = np.arange(recovered_indices.size)
+                fallback_refined_best = np.argmin(
+                    fallback_refined_objective, axis=1
+                )
+                refined_ok = np.isfinite(
+                    fallback_refined_objective[
+                        recovered_row, fallback_refined_best
+                    ]
+                )
+                refined_indices = recovered_indices[refined_ok]
+                if refined_indices.size:
+                    refined_rows = recovered_row[refined_ok]
+                    refined_best = fallback_refined_best[refined_ok]
+                    selected_id[refined_indices] = fallback_refined_ids[
+                        refined_rows, refined_best
+                    ]
+                    selected_iq[refined_indices] = fallback_refined_iq[
+                        refined_rows, refined_best
+                    ]
 
         external_id = float(external_row.get("Id_A", np.nan))
         external_iq = float(external_row.get("Iq_A", np.nan))
@@ -897,15 +1046,41 @@ class OperatingMapSolver:
         requests: np.ndarray,
         profile: str,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        cache_key = (
+            round(float(speed_rpm), 9),
+            str(profile),
+            np.asarray(requests, dtype=np.float64).tobytes(),
+        )
+        cached = self._reference_cache.get(cache_key)
+        if cached is not None:
+            return cached
         current = max(limits.max_current_vector_a, 1e-9)
         characteristic = parameters.flux_pm_wb / max(
             min(parameters.ld_h, parameters.lq_h), 1e-12
         )
         bound = min(max(3.0 * current, 2.0 * characteristic), 20.0 * current)
         points = 1001 if profile == "preview" else 1601
-        ids = np.linspace(-bound, bound, points)
         if parameters.has_saturation_data:
+            assert parameters.ld_saturation_map is not None
             assert parameters.lq_saturation_map is not None
+            id_lower = max(
+                -bound,
+                parameters.ld_saturation_map.id_axis_a[0],
+                parameters.lq_saturation_map.id_axis_a[0],
+            )
+            id_upper = min(
+                bound,
+                parameters.ld_saturation_map.id_axis_a[-1],
+                parameters.lq_saturation_map.id_axis_a[-1],
+            )
+            if id_upper <= id_lower:
+                raise ArithmeticError("饱和电感Map没有可用的Id参考范围。")
+            original_step = 2.0 * bound / max(points - 1, 1)
+            local_points = max(
+                101,
+                int(np.ceil((id_upper - id_lower) / original_step)) + 1,
+            )
+            ids = np.linspace(id_lower, id_upper, local_points)
             iq_upper = min(
                 2.0 * bound,
                 float(parameters.lq_saturation_map.iq_axis_a[-1]),
@@ -930,12 +1105,15 @@ class OperatingMapSolver:
             )
             mtpv_index = np.argmin(mtpv_objective, axis=1)
             row = np.arange(len(requests))
-            return (
+            result = (
                 ids[mtpa_index],
                 iqs[row, mtpa_index],
                 ids[mtpv_index],
                 iqs[row, mtpv_index],
             )
+            self._reference_cache[cache_key] = result
+            return result
+        ids = np.linspace(-bound, bound, points)
         coefficient = (
             1.5
             * parameters.pole_pairs
@@ -973,12 +1151,14 @@ class OperatingMapSolver:
         )
         mtpv_index = np.argmin(mtpv_objective, axis=1)
         row = np.arange(len(requests))
-        return (
+        result = (
             ids[mtpa_index],
             iqs[row, mtpa_index],
             ids[mtpv_index],
             iqs[row, mtpv_index],
         )
+        self._reference_cache[cache_key] = result
+        return result
 
     @staticmethod
     def _coefficient_threshold(parameters: MotorParameters) -> float:

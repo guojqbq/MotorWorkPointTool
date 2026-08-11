@@ -226,7 +226,7 @@ def main() -> int:
 
     sys.excepthook = show_unhandled_exception
     window = MainWindow()
-    window.show()
+    window.showMaximized()
     return app.exec()
 
 

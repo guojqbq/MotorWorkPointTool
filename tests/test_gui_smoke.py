@@ -32,7 +32,7 @@ from ui.plot_theme import (
 def test_main_window_can_be_created_without_display():
     app = QApplication.instance() or QApplication([])
     window = MainWindow(auto_calculate=False)
-    assert window.windowTitle() == "PMSM 性能分析工具 v0.4.2"
+    assert window.windowTitle() == "PMSM 性能分析工具 v0.5.0"
     assert window.parameter_panel.parameters().motor_type == "IPMSM"
     assert not window.parameter_panel.export_csv_button.isEnabled()
     assert isinstance(window.dq_curve_controls, QToolButton)

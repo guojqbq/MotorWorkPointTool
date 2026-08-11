@@ -8,7 +8,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -18,7 +17,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
@@ -42,6 +40,7 @@ from models.map_calculation_settings import MapCalculationSettings
 from models.motor_parameters import MotorParameters
 from models.saturation_map import InductanceSaturationMap
 from models.winding_connection import OpenWindingTopology, WindingConnection
+from ui.numeric_inputs import NoWheelDoubleSpinBox, NoWheelSpinBox
 
 
 class CollapsibleSection(QWidget):
@@ -107,7 +106,7 @@ class OptionalNumberInput(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         self.enabled_checkbox = QCheckBox("启用")
-        self.spinbox = QDoubleSpinBox()
+        self.spinbox = NoWheelDoubleSpinBox()
         self.spinbox.setRange(minimum, maximum)
         self.spinbox.setDecimals(decimals)
         self.spinbox.setSuffix(suffix)
@@ -193,7 +192,7 @@ class ParameterPanel(QWidget):
         motor_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
-        self.pole_pairs = QSpinBox()
+        self.pole_pairs = NoWheelSpinBox()
         self.pole_pairs.setRange(1, 100)
         self.rs_ohm = self._double_spin(0, 100, 6, " Ω")
         self.ld_mh = self._double_spin(1e-6, 10000, 6, " mH")
@@ -380,7 +379,7 @@ class ParameterPanel(QWidget):
         sweep_group = QGroupBox("外特性转速扫描")
         sweep_form = QFormLayout(sweep_group)
         self.max_speed_rpm = self._double_spin(1, 1_000_000, 1, " rpm")
-        self.speed_points = QSpinBox()
+        self.speed_points = NoWheelSpinBox()
         self.speed_points.setRange(2, 2001)
         self._legacy_speed_label = QLabel("兼容最大机械转速")
         sweep_form.addRow(self._legacy_speed_label, self.max_speed_rpm)
@@ -561,37 +560,42 @@ class ParameterPanel(QWidget):
         self.export_images_button = QPushButton("导出图像")
         self.exit_button = QPushButton("退出")
 
-        content_layout.addWidget(self.calculate_button)
-
+        self.fixed_calculation_area = QFrame()
+        self.fixed_calculation_area.setProperty("role", "topActionBar")
+        action_layout = QHBoxLayout(self.fixed_calculation_area)
+        action_layout.setContentsMargins(12, 8, 12, 8)
+        action_layout.setSpacing(10)
+        self.calculate_button.setMinimumWidth(138)
+        action_layout.addWidget(self.calculate_button)
+        self.cancel_button = QPushButton("取消计算")
+        self.cancel_button.setProperty("role", "danger")
+        self.cancel_button.setEnabled(False)
+        action_layout.addWidget(self.cancel_button)
+        self.calculation_stage_label = QLabel("参数已就绪，请点击开始计算")
+        self.calculation_stage_label.setProperty("role", "progressTitle")
+        self.calculation_stage_label.setMinimumWidth(210)
+        action_layout.addWidget(self.calculation_stage_label)
         self.calculation_progress_card = QFrame()
         self.calculation_progress_card.setProperty("role", "progressCard")
-        progress_layout = QVBoxLayout(self.calculation_progress_card)
-        progress_layout.setContentsMargins(12, 10, 12, 10)
-        progress_layout.setSpacing(7)
-        self.calculation_stage_label = QLabel("准备计算")
-        self.calculation_stage_label.setProperty("role", "progressTitle")
+        progress_layout = QHBoxLayout(self.calculation_progress_card)
+        progress_layout.setContentsMargins(8, 3, 8, 3)
+        progress_layout.setSpacing(9)
         self.calculation_progress_bar = QProgressBar()
         self.calculation_progress_bar.setRange(0, 100)
         self.calculation_progress_bar.setValue(0)
         self.calculation_progress_bar.setMinimumHeight(22)
+        self.calculation_progress_bar.setMinimumWidth(240)
         self.calculation_progress_bar.setFormat("%p%")
         self.calculation_point_label = QLabel("已完成 0 / 0")
         self.calculation_point_label.setProperty("role", "muted")
         self.calculation_elapsed_label = QLabel("用时 0.0 s")
         self.calculation_elapsed_label.setProperty("role", "muted")
-        detail_row = QHBoxLayout()
-        detail_row.addWidget(self.calculation_point_label)
-        detail_row.addStretch(1)
-        detail_row.addWidget(self.calculation_elapsed_label)
-        self.cancel_button = QPushButton("取消计算")
-        self.cancel_button.setProperty("role", "danger")
-        self.cancel_button.setEnabled(False)
-        progress_layout.addWidget(self.calculation_stage_label)
         progress_layout.addWidget(self.calculation_progress_bar)
-        progress_layout.addLayout(detail_row)
-        progress_layout.addWidget(self.cancel_button)
+        progress_layout.addWidget(self.calculation_point_label)
+        progress_layout.addWidget(self.calculation_elapsed_label)
         self.calculation_progress_card.setVisible(False)
-        content_layout.addWidget(self.calculation_progress_card)
+        action_layout.addWidget(self.calculation_progress_card, 1)
+        action_layout.addStretch(0)
         self._add_button_row(
             content_layout, self.restore_button, self.save_button, self.load_button
         )
@@ -603,18 +607,6 @@ class ParameterPanel(QWidget):
         )
         self._add_button_row(content_layout, self.export_images_button, self.exit_button)
         content_layout.addStretch(1)
-
-        # Keep the primary action and its live state visible even when the
-        # parameter scroll area is long (for example in saturation mode).
-        content_layout.removeWidget(self.calculate_button)
-        content_layout.removeWidget(self.calculation_progress_card)
-        self.fixed_calculation_area = QWidget()
-        fixed_layout = QVBoxLayout(self.fixed_calculation_area)
-        fixed_layout.setContentsMargins(8, 4, 8, 8)
-        fixed_layout.setSpacing(6)
-        fixed_layout.addWidget(self.calculate_button)
-        fixed_layout.addWidget(self.calculation_progress_card)
-        root_layout.addWidget(self.fixed_calculation_area, 0)
 
         self.calculate_button.clicked.connect(self.calculateRequested)
         self.cancel_button.clicked.connect(self.cancelRequested)
@@ -661,8 +653,8 @@ class ParameterPanel(QWidget):
     @staticmethod
     def _double_spin(
         minimum: float, maximum: float, decimals: int, suffix: str
-    ) -> QDoubleSpinBox:
-        spinbox = QDoubleSpinBox()
+    ) -> NoWheelDoubleSpinBox:
+        spinbox = NoWheelDoubleSpinBox()
         spinbox.setRange(minimum, maximum)
         spinbox.setDecimals(decimals)
         spinbox.setSuffix(suffix)
@@ -670,13 +662,15 @@ class ParameterPanel(QWidget):
         return spinbox
 
     @staticmethod
-    def _integer_spin(minimum: int, maximum: int) -> QSpinBox:
-        spinbox = QSpinBox()
+    def _integer_spin(minimum: int, maximum: int) -> NoWheelSpinBox:
+        spinbox = NoWheelSpinBox()
         spinbox.setRange(minimum, maximum)
         spinbox.setKeyboardTracking(False)
         return spinbox
 
-    def _numeric_editors(self) -> Iterable[QSpinBox | QDoubleSpinBox]:
+    def _numeric_editors(
+        self,
+    ) -> Iterable[NoWheelSpinBox | NoWheelDoubleSpinBox]:
         return (
             self.pole_pairs,
             self.rs_ohm,
@@ -1166,6 +1160,18 @@ class ParameterPanel(QWidget):
             and self.calculation_progress_card.property("state") == "completed"
         ):
             self.calculation_progress_card.setVisible(False)
+
+    def set_action_status(self, text: str, *, state: str = "idle") -> None:
+        if self._calculating:
+            return
+        self.calculation_stage_label.setText(str(text))
+        self.fixed_calculation_area.setProperty("state", state)
+        self.fixed_calculation_area.style().unpolish(
+            self.fixed_calculation_area
+        )
+        self.fixed_calculation_area.style().polish(
+            self.fixed_calculation_area
+        )
 
     def _refresh_progress_card_style(self) -> None:
         self.calculation_progress_card.style().unpolish(

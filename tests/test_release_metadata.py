@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_version_sources_and_user_documentation_are_synchronized():
     version = (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip()
-    assert version == __version__ == "0.4.2"
+    assert version == __version__ == "0.5.0"
     user_guide = (ROOT / "README_用户说明.md").read_text(
         encoding="utf-8"
     )
